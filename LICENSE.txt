@@ -1,0 +1,36 @@
+# License Agreement for ReplayModule
+
+**Copyright (c) 2026 Silvan Teufel. All rights reserved.**
+
+This repository provides the source code for the "ReplayModule" plugin under a custom Source-Available license. The license grants different rights depending on whether your project is commercial or non-commercial.
+
+ReplayModule is standalone and does not require any other plugin. It contains an optional integration with the "RTSUnitTemplate" plugin, which is licensed separately under its own terms; that integration only compiles when RTSUnitTemplate is installed, and using it requires a valid license for RTSUnitTemplate as well.
+
+### 1. NON-COMMERCIAL USE (FREE)
+
+You are granted a worldwide, royalty-free, non-exclusive right to download, fork, modify, and use this source code for **personal, educational, and non-commercial projects**.
+Under this non-commercial tier, you may:
+
+* Integrate the plugin into your free games or applications.
+* Create public forks of this repository, provided this original `LICENSE` file remains intact and unmodified in all copies and forks.
+* You may **not** directly or indirectly monetize games or applications created under this free tier (e.g., no retail sales, no in-app purchases, no ad revenue).
+
+### 2. COMMERCIAL USE (REQUIRES FAB LICENSE)
+
+To use this plugin (or any modified version of it) in a **commercial project**, you MUST purchase a valid license from the official Fab Store (Epic Games Marketplace).
+A project is considered commercial if it generates revenue in any form (e.g., selling the game, microtransactions, ad revenue, Patreon funding, or enterprise use).
+Once a valid license is purchased, you are granted the right to:
+
+* Integrate the plugin into your commercial video games or interactive applications.
+* Distribute and sell those compiled games or applications globally.
+
+### 3. GLOBAL RESTRICTIONS (NO RESALE AS A PLUGIN)
+
+Regardless of whether you are using the software commercially or non-commercially, you are **strictly prohibited** from:
+
+* Selling, redistributing, or sublicensing the plugin's source code or its assets, either unmodified or modified, as a standalone product, plugin, framework, template, or development tool on any marketplace (including but not limited to Fab, Unreal Engine Marketplace, Unity Asset Store, or itch.io).
+* Claiming ownership or authorship of the original software.
+
+### 4. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR (SILVAN TEUFEL) BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
