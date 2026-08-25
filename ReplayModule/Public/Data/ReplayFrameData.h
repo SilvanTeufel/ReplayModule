@@ -89,6 +89,189 @@ struct REPLAYMODULE_API FReplayViewportQuad
 	bool bValid = false;
 };
 
+/**
+ * One actor in one frame - the 3D counterpart to FReplayDot.
+ *
+ * FReplayDot carries a position and a colour and nothing else, which is all a minimap needs but
+ * far too little to rebuild a scene: no identity (so a dot cannot be followed across frames), no
+ * orientation, no height, no idea what was standing there. This struct adds exactly what a viewport
+ * playback has to have, and stays small enough that a long match still fits in memory.
+ *
+ * Kept as a separate array next to Dots rather than replacing them - the minimap replay keeps
+ * reading Dots and is unaffected by anything here.
+ */
+USTRUCT()
+struct REPLAYMODULE_API FReplayActorState
+{
+	GENERATED_BODY()
+
+	/** Stable across frames, so a unit can be matched to its proxy and followed. */
+	UPROPERTY()
+	uint32 ActorId = 0;
+
+	/** Index into FReplayRecording::ClassTable. */
+	UPROPERTY()
+	uint16 ClassIndex = 0;
+
+	/** World position. Full precision - quantizing this is what makes replays look jittery. */
+	UPROPERTY()
+	FVector3f Location = FVector3f::ZeroVector;
+
+	/** Yaw only; RTS units do not meaningfully pitch or roll. Degrees * 100, so 0.01 deg resolution. */
+	UPROPERTY()
+	int16 YawCentiDegrees = 0;
+
+	/** The unit's logical state at that moment, cast from UnitData::EState. */
+	UPROPERTY()
+	uint8 StateIndex = 0;
+
+	/**
+	 * What the animation blueprint was actually showing - which is NOT the same as StateIndex.
+	 *
+	 * The live anim instance starts from the unit state but then corrects it: a unit whose state
+	 * says Run/Chase/Patrol while it is standing still gets reported as Idle, so it does not run on
+	 * the spot. Replaying StateIndex therefore produces running units standing still - exactly the
+	 * mismatch this field exists to avoid.
+	 */
+	UPROPERTY()
+	uint8 AnimStateIndex = 0;
+
+	/**
+	 * Movement speed the anim blueprint saw, in tenths of a unit per second.
+	 *
+	 * Blend spaces for walking and running are driven by this, not by the state: a unit can sit in
+	 * Run with a speed of zero and the blend space will still show it standing. Without this the
+	 * proxies looked frozen even though their states were correct.
+	 */
+	UPROPERTY()
+	uint16 SpeedDeciUnits = 0;
+
+	/**
+	 * The anim blueprint's two blend inputs.
+	 *
+	 * Full floats, not quantized bytes. They were int8 over -1..1 on the assumption that a blend
+	 * point is a normalized value; measured against the live game they run up to 75, so every value
+	 * above 1.27 was being clipped and the blend space never left its resting corner.
+	 */
+	UPROPERTY()
+	float BlendPoint1 = 0.f;
+
+	UPROPERTY()
+	float BlendPoint2 = 0.f;
+
+	/**
+	 * Play rate and position of the continuous animation - what drives sustained fire on ranged
+	 * units. The anim instance takes both from the Mass fragment; without them a ranged unit holds
+	 * its idle pose while shooting.
+	 */
+	UPROPERTY()
+	float ContinuousPlayRate = 1.f;
+
+	UPROPERTY()
+	float ContinuousAnimationPosition = 0.f;
+
+	/** 0..255 mapped over 0..100 % so the health bar can be reproduced. */
+	UPROPERTY()
+	uint8 HealthPercent = 255;
+
+	UPROPERTY()
+	int8 TeamId = -1;
+
+	/** Bit 0: is a building. Bit 1: was selectable by the recording player. Rest reserved. */
+	UPROPERTY()
+	uint8 Flags = 0;
+
+	FReplayActorState() = default;
+
+	float GetYawDegrees() const { return static_cast<float>(YawCentiDegrees) * 0.01f; }
+	float GetBlendPoint1() const { return BlendPoint1; }
+	float GetBlendPoint2() const { return BlendPoint2; }
+	void SetBlendPoints(float B1, float B2);
+	float GetSpeed() const { return static_cast<float>(SpeedDeciUnits) * 0.1f; }
+	void SetSpeed(float Speed);
+	void SetYawDegrees(float Yaw);
+
+	bool IsBuilding() const { return (Flags & 0x1) != 0; }
+};
+
+/**
+ * One projectile in flight, in one frame.
+ *
+ * Separate from FReplayActorState because projectiles are a different kind of thing to replay:
+ * they have no health, no team-coloured selection, no animation - but they do need pitch, which
+ * units do not, since a shot arcs and a unit does not.
+ */
+USTRUCT()
+struct REPLAYMODULE_API FReplayProjectileState
+{
+	GENERATED_BODY()
+
+	/** Stable across frames so a shot can be interpolated along its path instead of blinking. */
+	UPROPERTY()
+	uint32 ProjectileId = 0;
+
+	/** Index into FReplayRecording::ClassTable, shared with the unit states. */
+	UPROPERTY()
+	uint16 ClassIndex = 0;
+
+	UPROPERTY()
+	FVector3f Location = FVector3f::ZeroVector;
+
+	UPROPERTY()
+	int16 YawCentiDegrees = 0;
+
+	UPROPERTY()
+	int16 PitchCentiDegrees = 0;
+
+	FReplayProjectileState() = default;
+
+	float GetYawDegrees() const { return static_cast<float>(YawCentiDegrees) * 0.01f; }
+	float GetPitchDegrees() const { return static_cast<float>(PitchCentiDegrees) * 0.01f; }
+	void SetRotation(float Yaw, float Pitch);
+};
+
+/**
+ * One work area in one frame - resource nodes, build sites, base markers.
+ *
+ * Separate from FReplayActorState because a work area is not a unit: it has no team colour, no
+ * animation and no health, but it does have a scale that changes over the match. Resource nodes
+ * shrink as they are mined (AWorkArea::ShrinkResource), so replaying them at their original size
+ * would show a full deposit where the match had a nearly exhausted one.
+ */
+USTRUCT()
+struct REPLAYMODULE_API FReplayWorkAreaState
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	uint32 AreaId = 0;
+
+	/** Index into FReplayRecording::ClassTable, shared with units and projectiles. */
+	UPROPERTY()
+	uint16 ClassIndex = 0;
+
+	UPROPERTY()
+	FVector3f Location = FVector3f::ZeroVector;
+
+	UPROPERTY()
+	int16 YawCentiDegrees = 0;
+
+	/** Uniform scale in percent of 1.0, so a mined-down node keeps its reduced size. */
+	UPROPERTY()
+	uint8 ScalePercent = 100;
+
+	/** WorkAreaData::WorkAreaType, kept for tooling and future colouring. */
+	UPROPERTY()
+	uint8 AreaType = 0;
+
+	FReplayWorkAreaState() = default;
+
+	float GetYawDegrees() const { return static_cast<float>(YawCentiDegrees) * 0.01f; }
+	float GetScale() const { return static_cast<float>(ScalePercent) * 0.01f; }
+	void SetYawDegrees(float Yaw);
+	void SetScale(float Scale);
+};
+
 /** One recorded moment. */
 USTRUCT()
 struct REPLAYMODULE_API FReplayFrame
@@ -101,6 +284,18 @@ struct REPLAYMODULE_API FReplayFrame
 
 	UPROPERTY()
 	TArray<FReplayDot> Dots;
+
+	/** Empty on recordings made before the viewport playback existed, and on projects that disable it. */
+	UPROPERTY()
+	TArray<FReplayActorState> Actors;
+
+	/** Projectiles in flight at this moment. */
+	UPROPERTY()
+	TArray<FReplayProjectileState> Projectiles;
+
+	/** Resource nodes, build sites and base markers as they stood at this moment. */
+	UPROPERTY()
+	TArray<FReplayWorkAreaState> WorkAreas;
 
 	UPROPERTY()
 	FReplayViewportQuad Viewport;
@@ -187,6 +382,10 @@ struct REPLAYMODULE_API FReplayInfo
 
 	UPROPERTY(BlueprintReadOnly, Category = "Replay")
 	int32 ApproxMemoryKB = 0;
+
+	/** False for older recordings that only hold minimap dots - the viewport playback is then unavailable. */
+	UPROPERTY(BlueprintReadOnly, Category = "Replay")
+	bool bHasViewportData = false;
 };
 
 /**
@@ -230,15 +429,35 @@ struct REPLAYMODULE_API FReplayRecording
 	TArray<FReplayFrame> Frames;
 
 	/**
-	 * Optional CPU-side terrain layer, BGRA, BackgroundSize x BackgroundSize. Only filled when the
-	 * project hands one in - the RTS integration instead points the widget at the live topography
-	 * texture, which costs nothing but cannot be written to a save game.
+	 * CPU-side terrain layer, BGRA, BackgroundSize x BackgroundSize.
+	 *
+	 * The RTS integration used to skip this and point the widget at the minimap's live topography
+	 * texture instead. That texture is generated on a delay and did not exist yet when the recording
+	 * bootstrapped, so the pointer was null and replays played on bare fog - and a transient texture
+	 * could not have been written to a save game anyway. The recorder now copies the pixels in as soon
+	 * as the minimap has them (see ReplayRTS::TryFetchBackgroundPixels). Still optional: a project
+	 * without a minimap simply leaves it empty.
 	 */
 	UPROPERTY()
 	TArray<FColor> BackgroundPixels;
 
 	UPROPERTY()
 	int32 BackgroundSize = 0;
+
+	/**
+	 * Classes referenced by FReplayActorState::ClassIndex.
+	 *
+	 * Soft paths, because a recording is written to a save game and must not keep hard references
+	 * alive - and because a replay may well be watched in a session that never loaded these classes.
+	 */
+	UPROPERTY()
+	TArray<FSoftClassPath> ClassTable;
+
+	/** True when at least one frame carries actor states, i.e. a viewport replay is possible. */
+	bool HasActorStates() const;
+
+	/** Index of the class in ClassTable, appending it when new. INDEX_NONE when the table is full. */
+	int32 FindOrAddClass(const FSoftClassPath& ClassPath);
 
 	/** A recording is usable once it has non-degenerate bounds and at least one frame. */
 	bool IsValid() const;

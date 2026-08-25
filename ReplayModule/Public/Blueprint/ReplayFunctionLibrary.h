@@ -29,6 +29,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Replay", meta = (WorldContext = "WorldContextObject"))
 	static void CloseReplayWindow(const UObject* WorldContextObject);
 
+	/** Opens the list of stored replays so one can be picked and watched. */
+	UFUNCTION(BlueprintCallable, Category = "Replay", meta = (WorldContext = "WorldContextObject"))
+	static class UReplayBrowserWidget* OpenReplayBrowser(const UObject* WorldContextObject);
+
 	UFUNCTION(BlueprintPure, Category = "Replay", meta = (WorldContext = "WorldContextObject"))
 	static bool HasReplay(const UObject* WorldContextObject);
 

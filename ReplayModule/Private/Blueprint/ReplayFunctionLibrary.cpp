@@ -13,6 +13,8 @@
 #include "UObject/UObjectIterator.h"
 #include "Widgets/ReplayLauncherWidget.h"
 #include "Widgets/ReplayWidget.h"
+#include "Widgets/ReplayBrowserWidget.h"
+#include "System/ReplaySessionActor.h"
 
 namespace
 {
@@ -93,6 +95,23 @@ UReplayWidget* UReplayFunctionLibrary::OpenReplayWindow(const UObject* WorldCont
 	}
 
 	Widget->AddToViewport(Settings->ReplayZOrder);
+
+	// Pull the clients in. On a listen server this is what turns "the host watches a replay" into
+	// "everyone watches the same replay": the recording is broadcast and their windows open on the
+	// same moment. On a client this does nothing - GetOrCreate refuses to spawn there, and the
+	// client is already watching its own copy.
+	if (Settings->bShareReplayWithClients && World->GetNetMode() != NM_Standalone && World->GetNetMode() != NM_Client)
+	{
+		if (AReplaySessionActor* Session = AReplaySessionActor::GetOrCreate(World))
+		{
+			if (!Session->IsSharedPlaybackActive())
+			{
+				Session->BroadcastRecording();
+				Session->StartSharedPlayback();
+			}
+		}
+	}
+
 	return Widget;
 }
 
@@ -196,3 +215,40 @@ bool UReplayFunctionLibrary::LoadReplayFromSlot(const UObject* WorldContextObjec
 	UReplayStorageSubsystem* Storage = UReplayStorageSubsystem::Get(WorldContextObject);
 	return Storage && Storage->LoadReplayFromSlot(SlotName, UserIndex);
 }
+
+UReplayBrowserWidget* UReplayFunctionLibrary::OpenReplayBrowser(const UObject* WorldContextObject)
+{
+	UWorld* World = GetWorldSafe(WorldContextObject);
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC)
+	{
+		return nullptr;
+	}
+
+	const UReplayModuleSettings* Settings = GetDefault<UReplayModuleSettings>();
+
+	UClass* WidgetClass = Settings->BrowserWidgetClass.IsNull()
+		? UReplayBrowserWidget::StaticClass()
+		: Settings->BrowserWidgetClass.LoadSynchronous();
+
+	if (!WidgetClass)
+	{
+		WidgetClass = UReplayBrowserWidget::StaticClass();
+	}
+
+	UReplayBrowserWidget* Widget = CreateWidget<UReplayBrowserWidget>(PC, WidgetClass);
+	if (!Widget)
+	{
+		return nullptr;
+	}
+
+	// Above the replay window, so picking another replay is possible while one is open.
+	Widget->AddToViewport(Settings->ReplayZOrder + 1);
+	return Widget;
+}
+

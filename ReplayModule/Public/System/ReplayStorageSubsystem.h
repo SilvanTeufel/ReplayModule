@@ -62,10 +62,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Replay|Persistence")
 	bool SaveReplayToSlot(const FString& SlotName, int32 UserIndex = 0);
 
+	/**
+	 * Saves under an automatically generated slot name (map plus timestamp) so a player can keep
+	 * several replays without inventing names, and returns the name used.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Replay|Persistence")
+	FString SaveReplayToNewSlot(int32 UserIndex = 0);
+
+	/**
+	 * Every stored replay, newest first.
+	 *
+	 * The engine cannot enumerate save slots, so the module keeps its own index slot listing them -
+	 * scanning the save directory would break on platforms where saves are not loose files.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Replay|Persistence")
+	TArray<FReplaySlotInfo> GetStoredReplays(int32 UserIndex = 0) const;
+
+	/** Removes a replay and its index entry. */
+	UFUNCTION(BlueprintCallable, Category = "Replay|Persistence")
+	bool DeleteStoredReplay(const FString& SlotName, int32 UserIndex = 0);
+
 	UFUNCTION(BlueprintCallable, Category = "Replay|Persistence")
 	bool LoadReplayFromSlot(const FString& SlotName, int32 UserIndex = 0);
 
 private:
+	/** Adds or refreshes the index entry for a slot. */
+	void RememberSlot(const FString& SlotName, int32 UserIndex);
+
 	TSharedPtr<FReplayRecording, ESPMode::ThreadSafe> Recording;
 
 	UPROPERTY()

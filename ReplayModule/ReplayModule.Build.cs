@@ -44,6 +44,17 @@ public class ReplayModule : ModuleRules
 			// Public because RTSUnitTemplate publishes the Mass/GAS modules our integration headers
 			// pull in transitively through UnitBase.h.
 			PublicDependencyModuleNames.Add("RTSUnitTemplate");
+
+			// Unit health for the replay states is read off UAttributeSetBase. Its ATTRIBUTE_ACCESSORS
+			// call through FGameplayAttributeData, which lives in GameplayAbilities - including the
+			// header compiles fine without this, and then fails at link time.
+			PublicDependencyModuleNames.Add("GameplayAbilities");
+
+			// Projectiles are Mass entities, so recording them means running a Mass query.
+			// MassCommon carries FTransformFragment, MassEntity the query and execution context.
+			PublicDependencyModuleNames.Add("MassCore");
+			PublicDependencyModuleNames.Add("MassEntity");
+			PublicDependencyModuleNames.Add("MassCommon");
 		}
 	}
 

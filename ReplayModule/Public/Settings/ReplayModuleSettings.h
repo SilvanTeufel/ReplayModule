@@ -45,6 +45,31 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (ClampMin = "16", ClampMax = "16384"))
 	int32 MaxDotsPerFrame = 1024;
 
+	/**
+	 * Also record full unit states, which is what the viewport replay plays back.
+	 * Off means minimap-only recordings, as before - noticeably smaller, but no 3D playback.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording")
+	bool bRecordActorStates = true;
+
+	/** Upper bound per frame, mirroring MaxDotsPerFrame. A state is ~28 bytes. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (EditCondition = "bRecordActorStates", ClampMin = "16", ClampMax = "16384"))
+	int32 MaxActorStatesPerFrame = 2048;
+
+	/** Also record projectiles in flight, so the replay shows the shots and not just the shooters. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (EditCondition = "bRecordActorStates"))
+	bool bRecordProjectiles = true;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (EditCondition = "bRecordProjectiles", ClampMin = "16", ClampMax = "16384"))
+	int32 MaxProjectilesPerFrame = 1024;
+
+	/** Also record work areas - resource nodes, build sites and base markers. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (EditCondition = "bRecordActorStates"))
+	bool bRecordWorkAreas = true;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (EditCondition = "bRecordWorkAreas", ClampMin = "16", ClampMax = "16384"))
+	int32 MaxWorkAreasPerFrame = 1024;
+
 	/** Texture size the stored pixel radii are computed for. Playback rescales them. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Recording", meta = (ClampMin = "64", ClampMax = "2048"))
 	int32 ReferenceTextureSize = 256;
@@ -98,6 +123,10 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Widgets", meta = (MetaClass = "/Script/ReplayModule.ReplayLauncherWidget"))
 	TSoftClassPtr<UReplayLauncherWidget> LauncherWidgetClass;
 
+	/** Blueprint subclass used for the replay list. Empty falls back to the C++ layout. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Widgets", meta = (MetaClass = "/Script/ReplayModule.ReplayBrowserWidget"))
+	TSoftClassPtr<class UReplayBrowserWidget> BrowserWidgetClass;
+
 	// --- Playback ---
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (ClampMin = "0.1", ClampMax = "100.0"))
@@ -109,6 +138,38 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback")
 	bool bLoopPlayback = true;
+
+	/**
+	 * Upper bound for the viewport playback. Past roughly this the proxies jump between recorded
+	 * frames instead of gliding, because the recording interval and not the frame rate becomes the
+	 * limiting factor.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (ClampMin = "1.0", ClampMax = "20.0"))
+	float MaxPlaybackSpeed = 6.f;
+
+	/** Play the recording in the viewport with unit proxies, not just on the minimap. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback")
+	bool bEnableViewportPlayback = true;
+
+	/**
+	 * When the server opens a replay, take every connected client along: the recording is sent over
+	 * and their windows open on the same moment. Without this the host watches alone while the
+	 * clients keep playing the live match.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback")
+	bool bShareReplayWithClients = true;
+
+	/** Let the viewer click units during playback. Selection only - no orders are ever issued. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback"))
+	bool bAllowUnitSelection = true;
+
+	/** Where the minimap sits while the viewport replay runs. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback"))
+	FVector2D MinimapAnchor = FVector2D(1.f, 0.f);
+
+	/** Minimap edge length during viewport playback, in pixels. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback", ClampMin = "64.0", ClampMax = "1024.0"))
+	float MinimapOverlaySize = 320.f;
 
 	/** Resolution the replay picture is rendered at. Independent of the recorded reference size. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (ClampMin = "64", ClampMax = "2048"))

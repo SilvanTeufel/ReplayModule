@@ -155,6 +155,13 @@ void UReplayRecorderSubsystem::StartRecording(FVector2D WorldMin, FVector2D Worl
 
 	const UReplayModuleSettings* Settings = GetDefault<UReplayModuleSettings>();
 
+	// A fresh recording starts its ids at 1 again - otherwise a second match in the same session
+	// would carry the previous one's counter and its class table lookups would not line up.
+	ActorIdsByObject.Reset();
+	NextActorId = 0;
+	WorkAreaIdsByObject.Reset();
+	NextWorkAreaId = 0;
+
 	WorkingRecording = MakeShared<FReplayRecording, ESPMode::ThreadSafe>();
 	WorkingRecording->MapName = World->GetMapName();
 	WorkingRecording->RecordedAtUtc = FDateTime::UtcNow();
@@ -204,6 +211,29 @@ void UReplayRecorderSubsystem::StopRecording()
 
 			Storage->SetRecording(WorkingRecording);
 		}
+
+		// Bilanz ueber die ganze Aufnahme. Ohne sie ist ein Replay ohne Schuesse nicht von einem
+		// Replay eines Spiels ohne Kampf zu unterscheiden - und man sucht den Fehler an der falschen
+		// Stelle.
+		int32 ActorStates = 0;
+		int32 ProjectileStates = 0;
+		int32 FramesWithProjectiles = 0;
+		int32 WorkAreaStates = 0;
+		for (const FReplayFrame& Frame : WorkingRecording->Frames)
+		{
+			ActorStates += Frame.Actors.Num();
+			ProjectileStates += Frame.Projectiles.Num();
+			WorkAreaStates += Frame.WorkAreas.Num();
+			if (Frame.Projectiles.Num() > 0)
+			{
+				++FramesWithProjectiles;
+			}
+		}
+
+		UE_LOG(LogReplayModule, Log,
+			TEXT("Recorded content: %d unit states, %d projectile states across %d of %d frames, %d work area states, %d classes."),
+			ActorStates, ProjectileStates, FramesWithProjectiles, WorkingRecording->Frames.Num(),
+			WorkAreaStates, WorkingRecording->ClassTable.Num());
 	}
 	else
 	{
@@ -381,6 +411,24 @@ void UReplayRecorderSubsystem::CaptureFrame()
 		return;
 	}
 
+	// The terrain layer is captured by the minimap on a delay (AMinimapActor::DelayTime, 2 s), which is
+	// well after the bootstrap that started this recording - so asking once at the start always came
+	// back empty and every replay played on bare fog. Retry until it lands. Once it is in the recording
+	// it also survives into a save game, which the live transient texture never could.
+	if (WorkingRecording->BackgroundSize == 0)
+	{
+		TArray<FColor> Terrain;
+		int32 TerrainSize = 0;
+		if (ReplayRTS::TryFetchBackgroundPixels(World, Terrain, TerrainSize))
+		{
+			WorkingRecording->BackgroundPixels = MoveTemp(Terrain);
+			WorkingRecording->BackgroundSize = TerrainSize;
+
+			UE_LOG(LogReplayModule, Log, TEXT("Terrain layer picked up from the minimap (%d x %d)."),
+				TerrainSize, TerrainSize);
+		}
+	}
+
 	FReplayFrame Frame;
 	Frame.TimeSeconds = World->GetTimeSeconds() - RecordStartTime;
 
@@ -393,6 +441,30 @@ void UReplayRecorderSubsystem::CaptureFrame()
 	if (Settings->bRecordViewport && WorkingRecording->Style.bDrawViewport)
 	{
 		GatherViewport(Frame.Viewport);
+	}
+
+	// Full unit states for the viewport replay. Separate from the dots on purpose: the dots stay
+	// fog-filtered so the minimap replay keeps looking like the live minimap, while the states are
+	// recorded unfiltered because a 3D replay that pops units in and out is unwatchable.
+	if (Settings->bRecordActorStates)
+	{
+		ReplayRTS::GatherUnitStates(World, *WorkingRecording, Settings->MaxActorStatesPerFrame,
+			ActorIdsByObject, NextActorId, Frame.Actors);
+
+		// Projectiles are Mass entities and are gathered separately - an actor iterator finds none,
+		// which is why replays showed the shooters but never the shots.
+		if (Settings->bRecordProjectiles)
+		{
+			ReplayRTS::GatherProjectiles(World, *WorkingRecording, Settings->MaxProjectilesPerFrame, Frame.Projectiles);
+		}
+
+		// Work areas are plain actors and were missed by the unit pass - without them a replay shows
+		// workers walking to nothing.
+		if (Settings->bRecordWorkAreas)
+		{
+			ReplayRTS::GatherWorkAreas(World, *WorkingRecording, Settings->MaxWorkAreasPerFrame,
+				WorkAreaIdsByObject, NextWorkAreaId, Frame.WorkAreas);
+		}
 	}
 
 	WorkingRecording->Frames.Add(MoveTemp(Frame));

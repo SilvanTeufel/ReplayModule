@@ -170,6 +170,17 @@ private:
 	FTimerHandle BootstrapTimerHandle;
 	FTimerHandle GameEndTimerHandle;
 
+	/**
+	 * Replay id per recorded actor, and the counter they come from. Lives for the whole recording so
+	 * a unit keeps its id across every frame it appears in.
+	 */
+	TMap<FObjectKey, uint32> ActorIdsByObject;
+	uint32 NextActorId = 0;
+
+	/** Same mapping for work areas, counted separately so the two id spaces cannot collide. */
+	TMap<FObjectKey, uint32> WorkAreaIdsByObject;
+	uint32 NextWorkAreaId = 0;
+
 	float RecordInterval = 1.f;
 	float RecordStartTime = 0.f;
 	float BootstrapDeadline = 0.f;

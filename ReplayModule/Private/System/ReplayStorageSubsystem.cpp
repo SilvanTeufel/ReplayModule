@@ -98,6 +98,12 @@ bool UReplayStorageSubsystem::SaveReplayToSlot(const FString& SlotName, int32 Us
 
 	const bool bSaved = UGameplayStatics::SaveGameToSlot(SaveGame, SlotName, UserIndex);
 	UE_LOG(LogReplayModule, Log, TEXT("Saving replay to slot '%s': %s"), *SlotName, bSaved ? TEXT("ok") : TEXT("failed"));
+
+	if (bSaved)
+	{
+		RememberSlot(SlotName, UserIndex);
+	}
+
 	return bSaved;
 }
 
@@ -131,3 +137,117 @@ bool UReplayStorageSubsystem::LoadReplayFromSlot(const FString& SlotName, int32 
 	SetRecording(MakeShared<FReplayRecording, ESPMode::ThreadSafe>(SaveGame->Recording));
 	return true;
 }
+
+FString UReplayStorageSubsystem::SaveReplayToNewSlot(int32 UserIndex)
+{
+	if (!HasReplay())
+	{
+		UE_LOG(LogReplayModule, Warning, TEXT("Nothing to save - there is no recording."));
+		return FString();
+	}
+
+	const FReplayInfo Info = GetReplayInfo();
+
+	// Map plus local timestamp. Local rather than UTC because this name is shown to the player, and
+	// a replay stamped two hours off is confusing when picking one from a list.
+	FString Map = Info.MapName;
+	Map.RemoveFromStart(TEXT("UEDPIE_0_"));
+	Map.RemoveFromStart(TEXT("UEDPIE_1_"));
+	if (Map.IsEmpty())
+	{
+		Map = TEXT("Replay");
+	}
+
+	const FString SlotName = FString::Printf(TEXT("Replay_%s_%s"), *Map, *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
+
+	return SaveReplayToSlot(SlotName, UserIndex) ? SlotName : FString();
+}
+
+void UReplayStorageSubsystem::RememberSlot(const FString& SlotName, int32 UserIndex)
+{
+	const TCHAR* IndexSlot = UReplayIndexSaveGame::GetIndexSlotName();
+
+	UReplayIndexSaveGame* Index = Cast<UReplayIndexSaveGame>(
+		UGameplayStatics::LoadGameFromSlot(IndexSlot, UserIndex));
+
+	if (!Index)
+	{
+		Index = Cast<UReplayIndexSaveGame>(UGameplayStatics::CreateSaveGameObject(UReplayIndexSaveGame::StaticClass()));
+		if (!Index)
+		{
+			return;
+		}
+	}
+
+	const FReplayInfo Info = GetReplayInfo();
+
+	FReplaySlotInfo Entry;
+	Entry.SlotName = SlotName;
+	Entry.MapName = Info.MapName;
+	Entry.RecordedAtUtc = Info.RecordedAtUtc;
+	Entry.DurationSeconds = Info.DurationSeconds;
+	Entry.FrameCount = Info.FrameCount;
+	Entry.bHasViewportData = Info.bHasViewportData;
+
+	// Overwriting a slot must not leave two entries pointing at the same name.
+	Index->Slots.RemoveAll([&SlotName](const FReplaySlotInfo& Existing)
+	{
+		return Existing.SlotName == SlotName;
+	});
+
+	Index->Slots.Add(Entry);
+
+	UGameplayStatics::SaveGameToSlot(Index, IndexSlot, UserIndex);
+}
+
+TArray<FReplaySlotInfo> UReplayStorageSubsystem::GetStoredReplays(int32 UserIndex) const
+{
+	TArray<FReplaySlotInfo> Result;
+
+	const UReplayIndexSaveGame* Index = Cast<UReplayIndexSaveGame>(
+		UGameplayStatics::LoadGameFromSlot(UReplayIndexSaveGame::GetIndexSlotName(), UserIndex));
+
+	if (!Index)
+	{
+		return Result;
+	}
+
+	Result = Index->Slots;
+
+	// Entries whose save file is gone (deleted by hand, or a failed write) would just produce a row
+	// that cannot be loaded, so they are filtered out here rather than surfacing as a broken click.
+	Result.RemoveAll([UserIndex](const FReplaySlotInfo& Entry)
+	{
+		return !UGameplayStatics::DoesSaveGameExist(Entry.SlotName, UserIndex);
+	});
+
+	Result.Sort([](const FReplaySlotInfo& A, const FReplaySlotInfo& B)
+	{
+		return A.RecordedAtUtc > B.RecordedAtUtc;
+	});
+
+	return Result;
+}
+
+bool UReplayStorageSubsystem::DeleteStoredReplay(const FString& SlotName, int32 UserIndex)
+{
+	const bool bDeleted = UGameplayStatics::DeleteGameInSlot(SlotName, UserIndex);
+
+	if (UReplayIndexSaveGame* Index = Cast<UReplayIndexSaveGame>(
+		UGameplayStatics::LoadGameFromSlot(UReplayIndexSaveGame::GetIndexSlotName(), UserIndex)))
+	{
+		const int32 Removed = Index->Slots.RemoveAll([&SlotName](const FReplaySlotInfo& Entry)
+		{
+			return Entry.SlotName == SlotName;
+		});
+
+		if (Removed > 0)
+		{
+			UGameplayStatics::SaveGameToSlot(Index, UReplayIndexSaveGame::GetIndexSlotName(), UserIndex);
+		}
+	}
+
+	UE_LOG(LogReplayModule, Log, TEXT("Deleting replay '%s': %s"), *SlotName, bDeleted ? TEXT("ok") : TEXT("failed"));
+	return bDeleted;
+}
+

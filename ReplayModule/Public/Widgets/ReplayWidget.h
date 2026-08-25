@@ -13,6 +13,7 @@ class UImage;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UReplayFrameRenderer;
+class USizeBox;
 class USlider;
 class UTextBlock;
 
@@ -133,11 +134,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Replay")
 	void CloseReplay();
 
+	/** Saves the loaded recording under a generated slot name. Returns the name, empty on failure. */
+	UFUNCTION(BlueprintCallable, Category = "Replay")
+	FString SaveReplay();
+
 	/** Hook for a Blueprint subclass that wants to refresh its own labels. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Replay")
 	void OnReplayFrameChanged(int32 FrameIndex, float TimeSeconds);
 
 protected:
+	/**
+	 * Shrinks the map and parks it in a corner, for when the viewport shows the actual replay and the
+	 * minimap is a companion rather than the main picture. Position and size come from the settings.
+	 */
+	void ApplyMinimapOverlayLayout();
+
 	virtual bool Initialize() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
@@ -154,6 +165,9 @@ protected:
 
 	UFUNCTION()
 	void HandleCloseClicked();
+
+	UFUNCTION()
+	void HandleSaveClicked();
 
 	UFUNCTION()
 	void HandleSliderValueChanged(float Value);
@@ -205,6 +219,13 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional), Category = "Replay|Widgets")
 	TObjectPtr<UButton> CloseButton = nullptr;
 
+	/** Writes the current recording to a new slot so it survives the session. */
+	UPROPERTY(BlueprintReadOnly, Category = "Replay|Widgets", meta = (BindWidgetOptional, AllowPrivateAccess = "true"))
+	TObjectPtr<UButton> SaveButton = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Replay|Widgets", meta = (BindWidgetOptional, AllowPrivateAccess = "true"))
+	TObjectPtr<UTextBlock> SaveText = nullptr;
+
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional), Category = "Replay|Widgets")
 	TObjectPtr<UTextBlock> TimeText = nullptr;
 
@@ -226,6 +247,14 @@ private:
 	int32 CurrentFrame = INDEX_NONE;
 
 	bool bPlaying = false;
+
+	/** True while the recording is also being played back in the viewport with unit proxies. */
+	UPROPERTY(BlueprintReadOnly, Category = "Replay|Playback", meta = (AllowPrivateAccess = "true"))
+	bool bViewportPlaybackActive = false;
+
+	/** The box the map picture sits in, kept so the overlay layout can shrink it. */
+	UPROPERTY()
+	TObjectPtr<USizeBox> MapSizeBox = nullptr;
 
 	/** Set while the slider writes into us, so its own callback is not mistaken for a user seek. */
 	bool bUpdatingSlider = false;

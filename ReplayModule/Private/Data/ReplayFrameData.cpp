@@ -100,6 +100,9 @@ int64 FReplayRecording::GetApproxMemoryBytes() const
 	{
 		Bytes += sizeof(FReplayFrame);
 		Bytes += static_cast<int64>(Frame.Dots.Num()) * sizeof(FReplayDot);
+		Bytes += static_cast<int64>(Frame.Actors.Num()) * sizeof(FReplayActorState);
+		Bytes += static_cast<int64>(Frame.Projectiles.Num()) * sizeof(FReplayProjectileState);
+		Bytes += static_cast<int64>(Frame.WorkAreas.Num()) * sizeof(FReplayWorkAreaState);
 		Bytes += static_cast<int64>(Frame.Viewport.Corners.Num()) * sizeof(FVector2f);
 	}
 
@@ -116,6 +119,7 @@ FReplayInfo FReplayRecording::GetInfo() const
 	Info.IntervalSeconds = IntervalSeconds;
 	Info.LocalTeamId = LocalTeamId;
 	Info.ApproxMemoryKB = static_cast<int32>(GetApproxMemoryBytes() / 1024);
+	Info.bHasViewportData = HasActorStates();
 	return Info;
 }
 
@@ -157,3 +161,84 @@ void FReplayRecording::Reset()
 	BackgroundPixels.Reset();
 	BackgroundSize = 0;
 }
+
+void FReplayActorState::SetYawDegrees(float Yaw)
+{
+	// Auf -180..180 bringen, sonst laeuft die Multiplikation aus dem int16 heraus und ein
+	// Yaw von 200 Grad kippt auf -159.
+	const float Wrapped = FMath::UnwindDegrees(Yaw);
+	YawCentiDegrees = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(Wrapped * 100.f), -32768, 32767));
+}
+
+bool FReplayRecording::HasActorStates() const
+{
+	for (const FReplayFrame& Frame : Frames)
+	{
+		if (Frame.Actors.Num() > 0)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int32 FReplayRecording::FindOrAddClass(const FSoftClassPath& ClassPath)
+{
+	if (ClassPath.IsNull())
+	{
+		return INDEX_NONE;
+	}
+
+	const int32 Existing = ClassTable.IndexOfByKey(ClassPath);
+	if (Existing != INDEX_NONE)
+	{
+		return Existing;
+	}
+
+	// ClassIndex is a uint16, so the table cannot grow past 65535 entries. A project would have to
+	// field that many distinct unit classes to hit this, but silently wrapping would spawn the wrong
+	// mesh for every unit past the limit.
+	if (ClassTable.Num() >= MAX_uint16)
+	{
+		return INDEX_NONE;
+	}
+
+	return ClassTable.Add(ClassPath);
+}
+
+void FReplayActorState::SetBlendPoints(float B1, float B2)
+{
+	// Stored as-is. Clamping these to -1..1 was a mistake: the live values reach 75.
+	BlendPoint1 = B1;
+	BlendPoint2 = B2;
+}
+
+void FReplayProjectileState::SetRotation(float Yaw, float Pitch)
+{
+	const float WrappedYaw = FMath::UnwindDegrees(Yaw);
+	const float WrappedPitch = FMath::UnwindDegrees(Pitch);
+	YawCentiDegrees = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(WrappedYaw * 100.f), -32768, 32767));
+	PitchCentiDegrees = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(WrappedPitch * 100.f), -32768, 32767));
+}
+
+void FReplayWorkAreaState::SetYawDegrees(float Yaw)
+{
+	const float Wrapped = FMath::UnwindDegrees(Yaw);
+	YawCentiDegrees = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(Wrapped * 100.f), -32768, 32767));
+}
+
+void FReplayWorkAreaState::SetScale(float Scale)
+{
+	// 0..2.55 in one byte. A work area larger than that would be clamped, which is far better than
+	// wrapping round to something tiny.
+	ScalePercent = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(Scale * 100.f), 0, 255));
+}
+
+void FReplayActorState::SetSpeed(float Speed)
+{
+	// Tenths of a unit per second in a uint16 covers up to ~6553 uu/s, well past anything an RTS
+	// unit moves at, and keeps the resolution fine enough for a blend space.
+	SpeedDeciUnits = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(Speed * 10.f), 0, 65535));
+}
+

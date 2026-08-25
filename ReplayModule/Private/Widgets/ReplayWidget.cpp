@@ -21,6 +21,8 @@
 #include "Settings/ReplayModuleSettings.h"
 #include "System/ReplayFrameRenderer.h"
 #include "System/ReplayStorageSubsystem.h"
+#include "System/ReplayPlaybackSubsystem.h"
+#include "System/ReplaySessionActor.h"
 
 #define LOCTEXT_NAMESPACE "ReplayWidget"
 
@@ -80,6 +82,11 @@ void UReplayWidget::NativeConstruct()
 		CloseButton->OnClicked.AddUniqueDynamic(this, &UReplayWidget::HandleCloseClicked);
 	}
 
+	if (SaveButton)
+	{
+		SaveButton->OnClicked.AddUniqueDynamic(this, &UReplayWidget::HandleSaveClicked);
+	}
+
 	if (TimeSlider)
 	{
 		TimeSlider->OnValueChanged.AddUniqueDynamic(this, &UReplayWidget::HandleSliderValueChanged);
@@ -89,6 +96,24 @@ void UReplayWidget::NativeConstruct()
 
 	ApplyMaterials();
 	LoadReplayFromStorage();
+
+	// Try the viewport playback. It declines by itself when the recording predates unit states or the
+	// setting is off, and the widget then simply stays the minimap replay it has always been.
+	if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+	{
+		bViewportPlaybackActive = Playback->BeginPlayback();
+
+		if (bViewportPlaybackActive)
+		{
+			// The viewport is the main picture now, so the map shrinks into a corner overlay.
+			ApplyMinimapOverlayLayout();
+
+			// One clock for both pictures: the subsystem owns the time and this widget follows it.
+			// Two independent clocks drift apart within seconds at 6x and then show different moments.
+			PlaybackSpeed = FMath::Min(PlaybackSpeed, Settings->MaxPlaybackSpeed);
+			Playback->SetSpeed(PlaybackSpeed);
+		}
+	}
 
 	if (bAutoPlayOnOpen)
 	{
@@ -103,6 +128,30 @@ void UReplayWidget::NativeConstruct()
 void UReplayWidget::NativeDestruct()
 {
 	bPlaying = false;
+
+	// Closing the window by any route (including being torn down with the HUD) has to end the
+	// playback - otherwise the proxies stay behind and the live units stay hidden.
+	if (bViewportPlaybackActive)
+	{
+		// Same rule as CloseReplay: a shared viewing is ended by the server, not by one guest's window
+		// going away.
+		bool bMayEnd = true;
+		if (const AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+		{
+			bMayEnd = !Session->IsSharedPlaybackActive();
+		}
+
+		if (bMayEnd)
+		{
+			if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+			{
+				Playback->EndPlayback();
+			}
+		}
+
+		bViewportPlaybackActive = false;
+	}
+
 	Recording.Reset();
 
 	Super::NativeDestruct();
@@ -123,18 +172,28 @@ void UReplayWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		return;
 	}
 
-	PlaybackTime += InDeltaTime * PlaybackSpeed;
-
-	if (PlaybackTime >= Duration)
+	if (UReplayPlaybackSubsystem* Playback = bViewportPlaybackActive ? UReplayPlaybackSubsystem::Get(this) : nullptr)
 	{
-		if (bLoop)
+		// The subsystem advances the time because it also has to move the proxies; the widget just
+		// reads it, so the minimap always shows the same moment as the viewport.
+		PlaybackTime = Playback->GetPlaybackTime();
+		bPlaying = !Playback->IsPaused();
+	}
+	else
+	{
+		PlaybackTime += InDeltaTime * PlaybackSpeed;
+
+		if (PlaybackTime >= Duration)
 		{
-			PlaybackTime = FMath::Fmod(PlaybackTime, Duration);
-		}
-		else
-		{
-			PlaybackTime = Duration;
-			bPlaying = false;
+			if (bLoop)
+			{
+				PlaybackTime = FMath::Fmod(PlaybackTime, Duration);
+			}
+			else
+			{
+				PlaybackTime = Duration;
+				bPlaying = false;
+			}
 		}
 	}
 
@@ -229,12 +288,46 @@ void UReplayWidget::PlayReplay()
 	}
 
 	bPlaying = true;
+
+	// In a shared session the request goes through the server, so pressing play here starts it for
+	// everyone rather than desyncing this viewer from the rest.
+	if (AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+	{
+		if (Session->IsSharedPlaybackActive())
+		{
+			Session->RequestPaused(false);
+			RefreshLabels();
+			return;
+		}
+	}
+
+	if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+	{
+		Playback->SetPaused(false);
+	}
+
 	RefreshLabels();
 }
 
 void UReplayWidget::PauseReplay()
 {
 	bPlaying = false;
+
+	if (AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+	{
+		if (Session->IsSharedPlaybackActive())
+		{
+			Session->RequestPaused(true);
+			RefreshLabels();
+			return;
+		}
+	}
+
+	if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+	{
+		Playback->SetPaused(true);
+	}
+
 	RefreshLabels();
 }
 
@@ -252,7 +345,27 @@ void UReplayWidget::ToggleReplayPlayback()
 
 void UReplayWidget::SetReplaySpeed(float NewSpeed)
 {
-	PlaybackSpeed = FMath::Clamp(NewSpeed, 0.1f, 100.f);
+	// Capped at the setting (6x) while the viewport plays: past that the proxies jump from recorded
+	// frame to recorded frame instead of gliding, because the recording interval becomes the limit.
+	const UReplayModuleSettings* Settings = GetDefault<UReplayModuleSettings>();
+	const float Ceiling = bViewportPlaybackActive ? Settings->MaxPlaybackSpeed : 100.f;
+	PlaybackSpeed = FMath::Clamp(NewSpeed, 0.1f, Ceiling);
+
+	if (AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+	{
+		if (Session->IsSharedPlaybackActive())
+		{
+			Session->RequestSpeed(PlaybackSpeed);
+			RefreshLabels();
+			return;
+		}
+	}
+
+	if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+	{
+		Playback->SetSpeed(PlaybackSpeed);
+	}
+
 	RefreshLabels();
 }
 
@@ -285,6 +398,26 @@ void UReplayWidget::SeekToTime(float TimeSeconds)
 {
 	PlaybackTime = FMath::Clamp(TimeSeconds, 0.f, FMath::Max(0.f, ReplayInfo.DurationSeconds));
 
+	// Seeking has to re-seat every proxy, forwards and backwards alike - and in a shared session it
+	// must move everyone, which is why it goes through the server there.
+	bool bHandled = false;
+	if (AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+	{
+		if (Session->IsSharedPlaybackActive())
+		{
+			Session->RequestSeek(PlaybackTime);
+			bHandled = true;
+		}
+	}
+
+	if (!bHandled)
+	{
+		if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+		{
+			Playback->SeekToTime(PlaybackTime);
+		}
+	}
+
 	RefreshFrame();
 	RefreshLabels();
 }
@@ -292,6 +425,27 @@ void UReplayWidget::SeekToTime(float TimeSeconds)
 void UReplayWidget::CloseReplay()
 {
 	bPlaying = false;
+
+	// Puts the proxies away and unhides the live units, so closing the window leaves the level
+	// exactly as it was before the replay started.
+	//
+	// In a shared session only the server may end it - a guest closing their window should leave the
+	// viewing running for everyone else, and the server's StopSharedPlayback is the way out.
+	bool bMayEnd = true;
+	if (const AReplaySessionActor* Session = AReplaySessionActor::Find(this))
+	{
+		bMayEnd = !Session->IsSharedPlaybackActive();
+	}
+
+	if (bMayEnd)
+	{
+		if (UReplayPlaybackSubsystem* Playback = UReplayPlaybackSubsystem::Get(this))
+		{
+			Playback->EndPlayback();
+		}
+	}
+
+	bViewportPlaybackActive = false;
 	RemoveFromParent();
 }
 
@@ -503,6 +657,7 @@ void UReplayWidget::BuildFallbackLayout()
 			MapBox->SetWidthOverride(MapDisplaySize);
 			MapBox->SetHeightOverride(MapDisplaySize);
 			MapBox->SetContent(MapOverlay);
+			MapSizeBox = MapBox;
 
 			UImage* Background = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("BackgroundImage"));
 			if (Background)
@@ -629,8 +784,71 @@ void UReplayWidget::BuildFallbackLayout()
 		}
 
 		TObjectPtr<UTextBlock> CloseLabel = nullptr;
+		MakeButton(TEXT("SaveButton"), TEXT("SaveText"), LOCTEXT("ReplaySave", "Save"), SaveButton, SaveText);
 		MakeButton(TEXT("CloseButton"), TEXT("CloseText"), LOCTEXT("ReplayClose", "Close"), CloseButton, CloseLabel);
 	}
+}
+
+void UReplayWidget::ApplyMinimapOverlayLayout()
+{
+	const UReplayModuleSettings* Settings = GetDefault<UReplayModuleSettings>();
+
+	MapDisplaySize = Settings->MinimapOverlaySize;
+
+	if (MapSizeBox)
+	{
+		MapSizeBox->SetWidthOverride(MapDisplaySize);
+		MapSizeBox->SetHeightOverride(MapDisplaySize);
+	}
+
+	// Anchor and alignment both take the same 0..1 pair, so (1,0) pins the top-right corner of the
+	// widget to the top-right corner of the screen. Setting only the anchor would hang the widget off
+	// the edge, which is the usual way this ends up half off-screen.
+	const FVector2D Anchor = Settings->MinimapAnchor;
+	SetAnchorsInViewport(FAnchors(Anchor.X, Anchor.Y, Anchor.X, Anchor.Y));
+	SetAlignmentInViewport(Anchor);
+
+	// Backdrop out of the way: a full-screen dark panel behind a corner minimap would grey out the
+	// replay we are here to watch.
+	if (RootBorder)
+	{
+		RootBorder->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.55f));
+	}
+
+	UE_LOG(LogReplayModule, Log, TEXT("Minimap moved to the corner overlay (anchor %.1f/%.1f, %.0f px)."),
+		Anchor.X, Anchor.Y, MapDisplaySize);
+}
+
+FString UReplayWidget::SaveReplay()
+{
+	UReplayStorageSubsystem* Storage = UReplayStorageSubsystem::Get(this);
+	if (!Storage)
+	{
+		return FString();
+	}
+
+	const FString SlotName = Storage->SaveReplayToNewSlot();
+
+	// The button doubles as the status readout - a save that silently did nothing is the one thing
+	// a save button must never do.
+	if (SaveText)
+	{
+		SaveText->SetText(SlotName.IsEmpty()
+			? LOCTEXT("ReplaySaveFailed", "Save failed")
+			: LOCTEXT("ReplaySaved", "Saved"));
+	}
+
+	if (!SlotName.IsEmpty())
+	{
+		UE_LOG(LogReplayModule, Log, TEXT("Replay saved as '%s'."), *SlotName);
+	}
+
+	return SlotName;
+}
+
+void UReplayWidget::HandleSaveClicked()
+{
+	SaveReplay();
 }
 
 #undef LOCTEXT_NAMESPACE
