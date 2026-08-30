@@ -557,8 +557,38 @@ void UReplayWidget::RefreshLabels()
 	}
 }
 
+void UReplayWidget::ApplyStyleFromSettings()
+{
+	const UReplayModuleSettings* Settings = GetDefault<UReplayModuleSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	// Only fill what the widget left empty. A Blueprint that set a material deliberately keeps it -
+	// the project setting is the default for everyone else, not an override.
+	auto Uebernehmen = [](TObjectPtr<UMaterialInterface>& Ziel, const TSoftObjectPtr<UMaterialInterface>& Quelle)
+	{
+		if (Ziel || Quelle.IsNull())
+		{
+			return;
+		}
+
+		if (UMaterialInterface* Geladen = Quelle.LoadSynchronous())
+		{
+			Ziel = Geladen;
+		}
+	};
+
+	Uebernehmen(BorderMaterial, Settings->BorderMaterial);
+	Uebernehmen(FrameMaterial, Settings->FrameMaterial);
+	Uebernehmen(BackdropMaterial, Settings->BackdropMaterial);
+}
+
 void UReplayWidget::ApplyMaterials()
 {
+	ApplyStyleFromSettings();
+
 	if (MapMaterial && MapImage)
 	{
 		MapImage->SetBrushFromMaterial(MapMaterial);
@@ -577,7 +607,12 @@ void UReplayWidget::ApplyMaterials()
 
 	if (RootBorder)
 	{
-		if (BackdropMaterial)
+		// A dedicated border material wins over the backdrop: it is the one meant to draw the frame.
+		if (BorderMaterial)
+		{
+			RootBorder->SetBrushFromMaterial(BorderMaterial);
+		}
+		else if (BackdropMaterial)
 		{
 			RootBorder->SetBrushFromMaterial(BackdropMaterial);
 		}
@@ -620,12 +655,27 @@ void UReplayWidget::BuildFallbackLayout()
 	WidgetTree->RootWidget = Backdrop;
 	RootBorder = Backdrop;
 
+	// Controls to the left of the map rather than under it. Stacked vertically the window claimed a
+	// lot of screen height, and height is what a top-down RTS view can least afford to lose.
+	UHorizontalBox* MainRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("MainRow"));
+	if (!MainRow)
+	{
+		return;
+	}
+	Backdrop->SetContent(MainRow);
+
 	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("ReplayColumn"));
 	if (!Column)
 	{
 		return;
 	}
-	Backdrop->SetContent(Column);
+
+	if (UHorizontalBoxSlot* ColumnSlot = MainRow->AddChildToHorizontalBox(Column))
+	{
+		ColumnSlot->SetVerticalAlignment(VAlign_Bottom);
+		ColumnSlot->SetPadding(FMargin(0.f, 0.f, ReplayWidgetLayout::RowSpacing * 2.f, 0.f));
+		ColumnSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+	}
 
 	// --- Title ---
 	{
@@ -695,10 +745,9 @@ void UReplayWidget::BuildFallbackLayout()
 				FrameImage = Frame;
 			}
 
-			if (UVerticalBoxSlot* MapBoxSlot = Column->AddChildToVerticalBox(MapBox))
+			if (UHorizontalBoxSlot* MapBoxSlot = MainRow->AddChildToHorizontalBox(MapBox))
 			{
-				MapBoxSlot->SetHorizontalAlignment(HAlign_Center);
-				MapBoxSlot->SetPadding(FMargin(0.f, 0.f, 0.f, ReplayWidgetLayout::RowSpacing));
+				MapBoxSlot->SetVerticalAlignment(VAlign_Bottom);
 				MapBoxSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
 			}
 		}
@@ -801,16 +850,18 @@ void UReplayWidget::ApplyMinimapOverlayLayout()
 		MapSizeBox->SetHeightOverride(MapDisplaySize);
 	}
 
-	// Anchor and alignment both take the same 0..1 pair, so (1,0) pins the top-right corner of the
-	// widget to the top-right corner of the screen. Setting only the anchor would hang the widget off
-	// the edge, which is the usual way this ends up half off-screen.
+	// Anchor and alignment both take the same 0..1 pair, so (1,1) pins the bottom-right corner of the
+	// widget to the bottom-right corner of the screen. Setting only the anchor would hang the widget
+	// off the edge, which is the usual way this ends up half off-screen.
 	const FVector2D Anchor = Settings->MinimapAnchor;
 	SetAnchorsInViewport(FAnchors(Anchor.X, Anchor.Y, Anchor.X, Anchor.Y));
 	SetAlignmentInViewport(Anchor);
 
 	// Backdrop out of the way: a full-screen dark panel behind a corner minimap would grey out the
-	// replay we are here to watch.
-	if (RootBorder)
+	// replay we are here to watch. A project that supplies a border material keeps that instead - it
+	// is meant to carry the frame and background, so overriding it with a flat colour would undo the
+	// styling.
+	if (RootBorder && !BorderMaterial)
 	{
 		RootBorder->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.55f));
 	}

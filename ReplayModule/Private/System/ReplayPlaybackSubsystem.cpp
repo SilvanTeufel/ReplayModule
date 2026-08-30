@@ -301,6 +301,18 @@ void UReplayPlaybackSubsystem::ApplyTime(float TimeSeconds)
 		FVector Location = FVector(State.Location);
 		float Yaw = State.GetYawDegrees();
 
+		// Animation values are blended towards the next frame as well, not just the transform.
+		// Setting them straight from the current frame made every state change a jump: at a one
+		// second recording interval the blend point snaps from one value to the next in a single
+		// tick, which reads as a pop. The game gets its smoothing from FInterpTo in the animation
+		// processor; here the two surrounding frames provide it, which has the added advantage of
+		// being deterministic - seeking to the same moment always produces the same pose.
+		float BlendA = State.GetBlendPoint1();
+		float BlendB = State.GetBlendPoint2();
+		float UnitSpeed = State.GetSpeed();
+		float PlayRate = State.ContinuousPlayRate;
+		float AnimPos = State.ContinuousAnimationPosition;
+
 		if (const FReplayActorState* const* Found = NextById.Find(State.ActorId))
 		{
 			const FReplayActorState* Next = *Found;
@@ -309,6 +321,17 @@ void UReplayPlaybackSubsystem::ApplyTime(float TimeSeconds)
 			// Shortest way round, so a unit turning past 180 degrees does not spin the long way.
 			const float Delta = FMath::UnwindDegrees(Next->GetYawDegrees() - State.GetYawDegrees());
 			Yaw = State.GetYawDegrees() + Delta * Alpha;
+
+			BlendA = FMath::Lerp(BlendA, Next->GetBlendPoint1(), Alpha);
+			BlendB = FMath::Lerp(BlendB, Next->GetBlendPoint2(), Alpha);
+			UnitSpeed = FMath::Lerp(UnitSpeed, Next->GetSpeed(), Alpha);
+			PlayRate = FMath::Lerp(PlayRate, Next->ContinuousPlayRate, Alpha);
+
+			// The animation position runs forward and wraps; blending across a wrap would rewind
+			// the animation, so it is only blended while it is still moving forward.
+			AnimPos = (Next->ContinuousAnimationPosition >= AnimPos)
+				? FMath::Lerp(AnimPos, Next->ContinuousAnimationPosition, Alpha)
+				: AnimPos;
 		}
 
 		Proxy->TeamId = State.TeamId;
@@ -319,8 +342,7 @@ void UReplayPlaybackSubsystem::ApplyTime(float TimeSeconds)
 		// one: it is a discrete state, and interpolating between, say, Attack and Run would land on
 		// whatever enum value sits between them.
 		ReplayRTS::ApplyAnimState(Proxy->SkeletalMesh, State.AnimStateIndex,
-			State.GetBlendPoint1(), State.GetBlendPoint2(), State.GetSpeed(),
-			State.ContinuousPlayRate, State.ContinuousAnimationPosition);
+			BlendA, BlendB, UnitSpeed, PlayRate, AnimPos);
 	}
 
 	ApplyProjectiles(A, B, Alpha);

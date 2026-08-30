@@ -50,6 +50,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Replay|Style")
 	TObjectPtr<UMaterialInterface> BackdropMaterial = nullptr;
 
+	/**
+	 * Frame and background of the whole window, drawn by a material rather than a flat colour.
+	 * Takes precedence over BackdropMaterial and BackdropColor, so a project can give the replay the
+	 * same look as the rest of its UI without touching this class.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Replay|Style")
+	TObjectPtr<UMaterialInterface> BorderMaterial = nullptr;
+
 	/** Used when no BackdropMaterial is set. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Replay|Style")
 	FLinearColor BackdropColor = FLinearColor(0.f, 0.f, 0.f, 0.75f);
@@ -184,6 +192,9 @@ protected:
 	void RefreshLabels();
 
 	void ApplyMaterials();
+
+	/** Fills any material the widget left empty from the project settings. */
+	void ApplyStyleFromSettings();
 
 	// --- Bound widgets. All optional so a Blueprint subclass only names what it actually uses. ---
 

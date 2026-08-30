@@ -376,12 +376,15 @@ void ReplayRTS::GatherUnitStates(
 			continue;
 		}
 
-		// Corpses are left out for the same reason the dots leave them out: the unit is gone as far as
-		// the viewer is concerned, and the proxy would just stand around after its death.
-		if (Unit->GetUnitState() == UnitData::Dead)
-		{
-			continue;
-		}
+		// Dying units ARE recorded, unlike on the minimap.
+		//
+		// Skipping them made every death an instant vanishing: a unit fighting in one frame was
+		// simply absent in the next. The game plays a death animation, and the anim blueprint has a
+		// Dead state for exactly that, so the state is recorded and the proxy plays it out. The
+		// corpse disappears when the game destroys the actor, which is when it stops appearing in
+		// the frames - the same moment it goes away in the match.
+		//
+		// Cost is small: a dead unit is recorded for its despawn time only.
 
 		const int32 ClassIndex = Recording.FindOrAddClass(FSoftClassPath(Unit->GetClass()));
 		if (ClassIndex == INDEX_NONE)

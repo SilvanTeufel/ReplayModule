@@ -127,6 +127,28 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Widgets", meta = (MetaClass = "/Script/ReplayModule.ReplayBrowserWidget"))
 	TSoftClassPtr<class UReplayBrowserWidget> BrowserWidgetClass;
 
+	// --- Styling ---
+	//
+	// Set from the project, not from the plugin. The widget assets ship with this module and go out
+	// to other projects, so they must not reference project materials - those assets do not exist
+	// there and the reference would come up as a broken redirector. A soft path in DefaultGame.ini
+	// keeps the plugin self-contained while every project still gets its own look.
+
+	/**
+	 * Drawn as the window frame and background. Takes precedence over BackdropMaterial and
+	 * BackdropColor on the widget - it is the one meant to carry the project's panel style.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Styling", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	TSoftObjectPtr<class UMaterialInterface> BorderMaterial;
+
+	/** Ring or bezel drawn over the minimap. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Styling", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	TSoftObjectPtr<class UMaterialInterface> FrameMaterial;
+
+	/** Backdrop behind the whole window. Only used when no BorderMaterial is set. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Styling", meta = (AllowedClasses = "/Script/Engine.MaterialInterface"))
+	TSoftObjectPtr<class UMaterialInterface> BackdropMaterial;
+
 	// --- Playback ---
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (ClampMin = "0.1", ClampMax = "100.0"))
@@ -163,9 +185,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback"))
 	bool bAllowUnitSelection = true;
 
-	/** Where the minimap sits while the viewport replay runs. */
+	/** Where the window sits while the viewport replay runs. (1,1) is the bottom right corner. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback"))
-	FVector2D MinimapAnchor = FVector2D(1.f, 0.f);
+	FVector2D MinimapAnchor = FVector2D(1.f, 1.f);
 
 	/** Minimap edge length during viewport playback, in pixels. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Playback", meta = (EditCondition = "bEnableViewportPlayback", ClampMin = "64.0", ClampMax = "1024.0"))
